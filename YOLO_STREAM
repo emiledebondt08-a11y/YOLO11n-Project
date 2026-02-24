@@ -16,7 +16,7 @@ alert_is_on = False
 
 def main():
     global alert_is_on
-    print(f"Connecting to SICK camera at {CAM_URL}...")
+    print(f"Connecting to the camera at {CAM_URL}...")
     
     try:
         resp = requests.get(CAM_URL, stream=True, timeout=10)
