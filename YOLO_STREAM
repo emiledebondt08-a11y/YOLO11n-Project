@@ -1,0 +1,77 @@
+import cv2
+import requests
+import numpy as np
+from ultralytics import YOLO
+
+PI_IP = "XXX.XXX.XXX.XXX"  # Replace with your Raspberry Pi's IP address 
+PI_URL = f"http://{PI_IP}:5000"
+
+CAM_URL = "http://XXX.XXX.XXX.XXX/liveView"  # Replace with your camera's MJPEG stream URL
+
+MODEL_PATH = "best.pt" 
+
+print("Loading YOLO11 Model...")
+model = YOLO(MODEL_PATH)
+alert_is_on = False
+
+def main():
+    global alert_is_on
+    print(f"Connecting to SICK camera at {CAM_URL}...")
+    
+    try:
+        resp = requests.get(CAM_URL, stream=True, timeout=10)
+    except Exception as e:
+        print(f"Failed to connect to camera: {e}")
+        return
+
+    bytes_data = bytes()
+    
+    for chunk in resp.iter_content(chunk_size=1024):
+        bytes_data += chunk
+        a = bytes_data.find(b'\xff\xd8') 
+        b = bytes_data.find(b'\xff\xd9') 
+        
+        if a != -1 and b != -1:
+            jpg = bytes_data[a:b+2]
+            bytes_data = bytes_data[b+2:]
+            
+            frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+            
+            if frame is not None:
+                results = model.predict(frame, conf=0.5, verbose=False)
+                found_fallen = False
+                for r in results:
+                    for box in r.boxes:
+                        class_id = int(box.cls[0])
+                        label = model.names[class_id]
+                        if label == "Fallen Jar":
+                            found_fallen = True
+                            break
+
+                if found_fallen:
+                    if not alert_is_on:
+                        print("🚨 Jar Down! Sending ON to Pi...")
+                        try:
+                            requests.get(f"{PI_URL}/alert/on", timeout=1)
+                            alert_is_on = True
+                        except:
+                            print("Error: Could not reach Raspberry Pi server.")
+                else:
+                    if alert_is_on:
+                        print("✅ Clear! Sending OFF to Pi...")
+                        try:
+                            requests.get(f"{PI_URL}/alert/off", timeout=1)
+                            alert_is_on = False
+                        except:
+                            pass
+
+                annotated_frame = results[0].plot()
+                cv2.imshow("Production Monitor", annotated_frame)
+
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
